@@ -48,6 +48,7 @@ pub mod openrouter;
 pub mod tools;
 pub mod session;
 pub mod context;
+pub mod cli;
 
 // Re-export commonly used types for convenience
 pub use tools::{FileSystemTool, FileSystemOperations, ToolResult, get_file_system_tools};
