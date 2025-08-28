@@ -1,0 +1,18 @@
+{
+  "sessions": {
+    "4184": {
+      "id": "4184",
+      "name": "Context Test Session",
+      "created_at": 1756381979,
+      "data": {},
+      "context": {
+        "date": "2025-08-28T11:52:59.965822Z",
+        "last_updated": "2025-08-28T11:52:59.965823Z",
+        "file_timestamps": {},
+        "root_path": "/Users/dovcaspi/develop/KAI",
+        "initialized": false
+      }
+    }
+  },
+  "active_session_id": null
+}
