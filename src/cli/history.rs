@@ -82,7 +82,7 @@ impl CommandHistory {
             Some(_) => {
                 // Reset to no selection - return temporary current line if stored
                 self.current_index = None;
-                self.temp_current_line.take() // Take and clear the temp storage
+                self.temp_current_line.clone() // Clone instead of take to preserve it
             }
         }
     }
@@ -149,6 +149,16 @@ impl CommandHistory {
     /// Check if there's a stored current line
     pub fn has_stored_line(&self) -> bool {
         self.temp_current_line.is_some()
+    }
+    
+    /// Clear the stored current line
+    pub fn clear_stored_line(&mut self) {
+        self.temp_current_line = None;
+    }
+    
+    /// Check if currently at the stored line position (past all history)
+    pub fn is_at_stored_line(&self) -> bool {
+        self.current_index.is_none() && self.temp_current_line.is_some()
     }
     
     /// Get history summary for display
@@ -281,8 +291,12 @@ mod tests {
         assert_eq!(history.next().unwrap(), "second");
         assert_eq!(history.next().unwrap(), "currently typing...");
         
-        // Should clear the temp storage after returning it
-        assert!(!history.has_stored_line());
+        // Should preserve the temp storage (cloned, not taken)
+        assert!(history.has_stored_line());
+        
+        // Can navigate back to stored line again
+        assert_eq!(history.previous().unwrap(), "second");
+        assert_eq!(history.next().unwrap(), "currently typing...");
     }
     
     #[test]

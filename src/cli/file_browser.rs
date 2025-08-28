@@ -50,7 +50,7 @@ impl FileEntry {
     
     /// Get display name with icon
     pub fn display_name(&self) -> String {
-        let icon = if self.is_directory { "📁" } else { "📄" };
+        let icon = if self.is_directory { "🥡" } else { "🍣" };
         let size_info = if let Some(size) = self.size {
             format!(" ({})", format_file_size(size))
         } else {

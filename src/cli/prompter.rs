@@ -117,7 +117,7 @@ impl CliPrompter {
     /// Show welcome screen
     async fn show_welcome(&mut self) -> io::Result<()> {
         let welcome_text = vec![
-            "🎯 KAI Enhanced CLI Prompter".to_string(),
+            "🦀 KAI Enhanced CLI Prompter".to_string(),
             "".to_string(),
             "Enhanced terminal interface with advanced features:".to_string(),
             "• Type '/' for commands menu".to_string(),
@@ -235,17 +235,25 @@ impl CliPrompter {
                 self.ctrl_c_count = 0;
             },
             KeyCode::Down => {
-                // Navigate to next command in history or restore current line
+                // Check if we're currently showing the stored line
+                let was_at_stored_line = self.history.is_at_stored_line();
+                
+                // Navigate to next command in history or handle special cases
                 match self.history.next() {
                     Some(next_command) => {
                         let (width, _) = terminal::size()?;
                         self.editor = TextEditor::from_text(&next_command, width as usize);
                     }
                     None => {
-                        // At end of history - restore empty editor or allow cursor movement
+                        // At end of history
                         if self.history.current_index().is_none() && self.editor.line_count() > 1 {
                             // Allow cursor movement within text if multi-line and not in history mode
                             self.editor.move_cursor(CursorDirection::Down);
+                        } else if was_at_stored_line {
+                            // We were at stored line, now go to empty but keep stored line
+                            let (width, _) = terminal::size()?;
+                            self.editor = TextEditor::new(width as usize);
+                            // Don't clear stored line - it remains recoverable by pressing Up
                         } else {
                             // Clear editor when going past end of history (no stored line case)
                             let (width, _) = terminal::size()?;
@@ -270,11 +278,10 @@ impl CliPrompter {
                     self.history.reset_navigation();
                     self.escape_count = 0;
                     self.show_info("Prompt cleared (3x Escape)")?;
-                } else if !self.editor.get_text().trim().is_empty() {
-                    // Clear current text on first/second escape
-                    let (width, _) = terminal::size()?;
-                    self.editor = TextEditor::new(width as usize);
-                    self.history.reset_navigation();
+                } else {
+                    // Show how many more escapes needed
+                    let remaining = 3 - self.escape_count;
+                    self.show_info(&format!("Press Escape {} more time(s) to clear prompt", remaining))?;
                 }
             }
             _ => {}
@@ -607,7 +614,7 @@ impl CliPrompter {
             };
 
             let block = Block::default()
-                .title("KAI 🚀")
+                .title("KAI 🦀")
                 .borders(Borders::ALL)
                 .style(Style::default().fg(frame_color));
 

@@ -153,7 +153,7 @@ impl CliCommand {
     /// Get help text for a specific command
     pub fn get_help_text(&self) -> Vec<String> {
         let mut help = vec![
-            format!("🎯 KAI CLI - {} Command", self),
+            format!("🦀 KAI CLI - {} Command", self),
             "".to_string(),
             format!("Description: {}", self.description()),
             format!("Usage: {}", self.usage()),

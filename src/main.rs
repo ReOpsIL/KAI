@@ -10,7 +10,7 @@ use std::process;
 #[tokio::main]
 async fn main() {
     // Print welcome banner
-    print_banner();
+    //print_banner();
     
     // Initialize and run the CLI prompter
     match run_cli_prompter().await {
@@ -27,14 +27,14 @@ async fn main() {
 
 fn print_banner() {
     println!("╭─────────────────────────────────────────────────╮");
-    println!("│  🤖 KAI - Enhanced CLI Prompter               │");
-    println!("│  Advanced terminal interface for AI prompting  │");
+    println!("│  KAI - Enhanced CLI Prompter                    │");
+    println!("│  Advanced terminal interface for AI prompting   │");
     println!("╰─────────────────────────────────────────────────╯");
     println!();
-    println!("🚀 Starting enhanced CLI interface...");
-    println!("💡 Tip: Type '/' for commands or '@' for file browser");
+    println!("🦀 Starting enhanced CLI interface...");
+    println!("🥢 Tip: Type '/' for commands or '@' for file browser");
     println!();
-    
+
     // Small delay to let user read the banner
     std::thread::sleep(std::time::Duration::from_millis(1000));
 }
