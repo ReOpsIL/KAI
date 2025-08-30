@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use walkdir::WalkDir;
 use serde::{Deserialize, Serialize};
-use crate::openrouter::{OpenRouterClient, Message};
+use crate::llm::{OpenRouterClient, Message};
 
 /// File information collected by the harvester
 #[derive(Debug, Clone, Serialize, Deserialize)]

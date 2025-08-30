@@ -59,11 +59,29 @@
 - Directory navigation with history
 - File size formatting (B, KB, MB, GB, TB)
 
+### 🤖 **AI Planning System**
+- **Advanced Task Planning**: Uses OpenRouter LLMs to create detailed action plans
+- **Structured Prompts**: Employs sophisticated prompt engineering for reliable results
+- **JSON Schema Parsing**: Converts AI responses to executable task structures  
+- **Phase-Based Organization**: Analysis → Implementation → Verification workflow
+- **Dependency Management**: Handles task dependencies and execution order
+- **Fallback Support**: Graceful degradation when AI is unavailable
+
 ## 🛠️ Installation
 
 ### Prerequisites
 - Rust 1.70+ 
 - A terminal that supports ANSI colors and UTF-8
+- OpenRouter API key (required for AI planning features)
+
+### OpenRouter Setup
+1. **Get API Key**: Visit [OpenRouter.ai](https://openrouter.ai) and create an account
+2. **Get API Key**: Generate an API key from your OpenRouter dashboard
+3. **Set Environment Variable**:
+   ```bash
+   export OPENROUTER_API_KEY=your_api_key_here
+   ```
+4. **Verify Setup**: The key should start with `sk-or-` for OpenRouter
 
 ### Build from Source
 ```bash
@@ -74,10 +92,24 @@ cargo build --release
 
 ### Run
 ```bash
+# Make sure your API key is set
+export OPENROUTER_API_KEY=your_api_key_here
+
+# Run the application
 cargo run
 # or
 ./target/release/kai
 ```
+
+### First Run
+When you start KAI for the first time with a valid API key, you'll see:
+```
+✅ OpenRouter client initialized successfully
+✅ CLI prompter initialized successfully  
+🧠 AI Planning system initialized with OpenRouter
+```
+
+If the API key is missing or invalid, KAI will show setup instructions and exit.
 
 ## 🎮 Usage
 

@@ -16,7 +16,7 @@
 //!
 //! ```rust,no_run
 //! use kai::tools::{get_file_system_tools, FileSystemOperations};
-//! use kai::openrouter::OpenRouterClient;
+//! use kai::llm::OpenRouterClient;
 //!
 //! // Get tool definitions for OpenRouter
 //! let tools = get_file_system_tools();
@@ -44,12 +44,15 @@
 //!
 //! All tools support wildcard patterns (*, **, ?) and provide comprehensive error handling.
 
-pub mod openrouter;
 pub mod tools;
 pub mod session;
 pub mod context;
 pub mod cli;
+pub mod planer;
+pub mod prompts;
+pub mod llm;
 
 // Re-export commonly used types for convenience
 pub use tools::{FileSystemTool, FileSystemOperations, ToolResult, get_file_system_tools};
-pub use openrouter::{OpenRouterClient, ChatRequest, ChatResponse, Message};
+pub use llm::{OpenRouterClient, ChatRequest, ChatResponse, Message};
+pub use prompts::PromptManager;

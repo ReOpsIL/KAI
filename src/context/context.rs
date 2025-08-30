@@ -5,7 +5,7 @@ use std::fs;
 use std::collections::HashMap;
 use crate::context::harvesters::{Harvester, HarvesterConfig, ModuleInfo, FileInfo};
 use crate::context::story::{Story, ResponseMetadata};
-use crate::openrouter::OpenRouterClient;
+use crate::llm::OpenRouterClient;
 
 /// Enhanced context object that manages contextual information with file tracking and updates
 #[derive(Debug, Clone, Serialize, Deserialize)]
