@@ -3,9 +3,9 @@
 //! This module handles configuration settings, theme management,
 //! color schemes, and OpenRouter model configuration for the CLI prompter.
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crossterm::style::Color;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// OpenRouter model configuration with tiered model selection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,9 +20,9 @@ impl Default for OpenRouterConfig {
     fn default() -> Self {
         Self {
             simple_model: "openai/gpt-4o-mini".to_string(),
-            midrange_model: "anthropic/claude-3-haiku".to_string(),
-            advanced_model: "anthropic/claude-3.5-sonnet".to_string(),
-            critical_model: "anthropic/claude-3-opus".to_string(),
+            midrange_model: "openai/gpt-4o-mini".to_string(),
+            advanced_model: "openai/gpt-4o-mini".to_string(),
+            critical_model: "openai/gpt-4o-mini".to_string(),
         }
     }
 }
@@ -31,7 +31,7 @@ impl Default for OpenRouterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliConfig {
     pub frame_color: String,
-    pub text_color: String, 
+    pub text_color: String,
     pub command_prefix: char,
     pub file_browser_prefix: char,
     pub auto_save_history: bool,
@@ -62,7 +62,7 @@ impl CliConfig {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Apply a theme by name
     pub fn apply_theme(&mut self, theme_name: &str) {
         match theme_name {
@@ -89,7 +89,7 @@ impl CliConfig {
         }
         self.theme_name = theme_name.to_string();
     }
-    
+
     /// Get frame color as Color
     pub fn get_frame_color(&self) -> Color {
         match self.frame_color.as_str() {
@@ -105,7 +105,7 @@ impl CliConfig {
             _ => Color::Blue,
         }
     }
-    
+
     /// Get text color as Color
     pub fn get_text_color(&self) -> Color {
         match self.text_color.as_str() {
@@ -120,7 +120,7 @@ impl CliConfig {
             _ => Color::White,
         }
     }
-    
+
     /// Get available themes
     pub fn get_available_themes() -> Vec<String> {
         vec![
@@ -135,10 +135,22 @@ impl CliConfig {
     /// Get available model tiers with their descriptions
     pub fn get_available_model_tiers(&self) -> Vec<(String, String)> {
         vec![
-            ("Tier 1 - Simple".to_string(), self.openrouter.simple_model.clone()),
-            ("Tier 2 - MidRange".to_string(), self.openrouter.midrange_model.clone()),
-            ("Tier 3 - Advanced".to_string(), self.openrouter.advanced_model.clone()),
-            ("Tier 4 - Critical".to_string(), self.openrouter.critical_model.clone()),
+            (
+                "Tier 1 - Simple".to_string(),
+                self.openrouter.simple_model.clone(),
+            ),
+            (
+                "Tier 2 - MidRange".to_string(),
+                self.openrouter.midrange_model.clone(),
+            ),
+            (
+                "Tier 3 - Advanced".to_string(),
+                self.openrouter.advanced_model.clone(),
+            ),
+            (
+                "Tier 4 - Critical".to_string(),
+                self.openrouter.critical_model.clone(),
+            ),
         ]
     }
 
@@ -156,14 +168,26 @@ impl CliConfig {
     /// Set model for specific tier
     pub fn set_model_for_tier(&mut self, tier: u8, model: String) -> bool {
         match tier {
-            1 => { self.openrouter.simple_model = model; true }
-            2 => { self.openrouter.midrange_model = model; true }
-            3 => { self.openrouter.advanced_model = model; true }
-            4 => { self.openrouter.critical_model = model; true }
+            1 => {
+                self.openrouter.simple_model = model;
+                true
+            }
+            2 => {
+                self.openrouter.midrange_model = model;
+                true
+            }
+            3 => {
+                self.openrouter.advanced_model = model;
+                true
+            }
+            4 => {
+                self.openrouter.critical_model = model;
+                true
+            }
             _ => false,
         }
     }
-    
+
     /// Get configuration summary for display
     pub fn get_summary(&self) -> Vec<String> {
         vec![
@@ -194,7 +218,7 @@ impl CliConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config() {
         let config = CliConfig::default();
@@ -202,9 +226,12 @@ mod tests {
         assert_eq!(config.file_browser_prefix, '@');
         assert_eq!(config.theme_name, "default");
         assert_eq!(config.openrouter.simple_model, "openai/gpt-4o-mini");
-        assert_eq!(config.openrouter.advanced_model, "anthropic/claude-3.5-sonnet");
+        assert_eq!(
+            config.openrouter.advanced_model,
+            "anthropic/claude-3.5-sonnet"
+        );
     }
-    
+
     #[test]
     fn test_theme_application() {
         let mut config = CliConfig::new();
@@ -213,13 +240,13 @@ mod tests {
         assert_eq!(config.frame_color, "Black");
         assert_eq!(config.text_color, "Green");
     }
-    
+
     #[test]
     fn test_color_conversion() {
         let config = CliConfig::default();
         let frame_color = config.get_frame_color();
         let text_color = config.get_text_color();
-        
+
         // Should not panic and return valid colors
         assert!(matches!(frame_color, Color::Blue));
         assert!(matches!(text_color, Color::White));
@@ -228,38 +255,38 @@ mod tests {
     #[test]
     fn test_openrouter_model_tiers() {
         let config = CliConfig::default();
-        
+
         // Test getting models by tier
         assert_eq!(config.get_model_by_tier(1), Some("openai/gpt-4o-mini"));
-        assert_eq!(config.get_model_by_tier(2), Some("anthropic/claude-3-haiku"));
-        assert_eq!(config.get_model_by_tier(3), Some("anthropic/claude-3.5-sonnet"));
-        assert_eq!(config.get_model_by_tier(4), Some("anthropic/claude-3-opus"));
+        assert_eq!(config.get_model_by_tier(2), Some("openai/gpt-4o-mini"));
+        assert_eq!(config.get_model_by_tier(3), Some("openai/gpt-4o-mini"));
+        assert_eq!(config.get_model_by_tier(4), Some("openai/gpt-4o-mini"));
         assert_eq!(config.get_model_by_tier(5), None);
     }
 
     #[test]
     fn test_model_tier_modification() {
         let mut config = CliConfig::default();
-        
+
         // Test setting models for different tiers
         assert!(config.set_model_for_tier(1, "custom/model-1".to_string()));
         assert!(config.set_model_for_tier(3, "custom/model-3".to_string()));
         assert!(!config.set_model_for_tier(5, "invalid".to_string()));
-        
-        assert_eq!(config.get_model_by_tier(1), Some("custom/model-1"));
-        assert_eq!(config.get_model_by_tier(2), Some("anthropic/claude-3-haiku")); // unchanged
-        assert_eq!(config.get_model_by_tier(3), Some("custom/model-3"));
+
+        assert_eq!(config.get_model_by_tier(1), Some("openai/gpt-4o-mini"));
+        assert_eq!(config.get_model_by_tier(2), Some("openai/gpt-4o-mini")); // unchanged
+        assert_eq!(config.get_model_by_tier(3), Some("openai/gpt-4o-mini"));
     }
 
     #[test]
     fn test_available_model_tiers() {
         let config = CliConfig::default();
         let tiers = config.get_available_model_tiers();
-        
+
         assert_eq!(tiers.len(), 4);
         assert_eq!(tiers[0].0, "Tier 1 - Simple");
         assert_eq!(tiers[0].1, "openai/gpt-4o-mini");
         assert_eq!(tiers[3].0, "Tier 4 - Critical");
-        assert_eq!(tiers[3].1, "anthropic/claude-3-opus");
+        assert_eq!(tiers[3].1, "openai/gpt-4o-mini");
     }
 }

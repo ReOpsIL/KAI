@@ -11,6 +11,67 @@ impl PromptManager {
         You create comprehensive plans that break down complex requests into specific, executable actions.".to_string()
     }
 
+    /// Enhanced system prompt with context integration
+    pub fn get_enhanced_system_prompt_with_context(context: &crate::context::Context) -> String {
+        let base_prompt = Self::get_system_prompt();
+        
+        // Generate context information
+        let context_info = Self::format_context_for_prompt(context);
+        
+        format!("{}\n\n{}", base_prompt, context_info)
+    }
+
+    /// Format context information for inclusion in system prompt
+    fn format_context_for_prompt(context: &crate::context::Context) -> String {
+        let mut context_parts = Vec::new();
+
+        // Add project context
+        context_parts.push(format!(
+            "## Project Context\n- Working directory: {}\n- Tracking {} files",
+            context.root_path.display(),
+            context.tracked_files_count()
+        ));
+
+        // Add recent conversation history if available
+        let recent_interactions = context.get_user_interactions_in_timeframe(1); // Last 1 day
+        if !recent_interactions.is_empty() {
+            context_parts.push("## Recent Context".to_string());
+            
+            // Limit to last 3 interactions to avoid token bloat
+            let recent_interactions: Vec<_> = recent_interactions.into_iter().take(3).collect();
+            
+            for (prompt, response, _timestamp) in recent_interactions {
+                context_parts.push(format!("- User asked: {}", 
+                    Self::truncate_text(&prompt, 100)));
+                
+                if let Some(resp) = response {
+                    context_parts.push(format!("- Assistant responded: {}", 
+                        Self::truncate_text(&resp, 150)));
+                }
+            }
+        }
+
+        // Add file change information if any
+        if context.initialized {
+            context_parts.push("## Session State\n- Context initialized and tracking file changes".to_string());
+        }
+
+        if context_parts.is_empty() {
+            return "## Context\nNo specific context available for this session.".to_string();
+        }
+
+        context_parts.join("\n\n")
+    }
+
+    /// Truncate text to specified length with ellipsis
+    fn truncate_text(text: &str, max_len: usize) -> String {
+        if text.len() <= max_len {
+            text.to_string()
+        } else {
+            format!("{}...", &text[..max_len.saturating_sub(3)])
+        }
+    }
+
     /// Get the main action plan prompt template (embedded)
     pub fn get_action_plan_template() -> &'static str {
         r#"# LLM Action Plan Generation Prompt

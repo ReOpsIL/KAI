@@ -70,6 +70,25 @@ impl Planner {
         Ok(format!("{}\nProcessed {} requests", result, responses.len()))
     }
 
+    /// Create an advanced plan using LLM with context integration
+    pub async fn create_and_execute_advanced_plan_with_context(
+        &mut self, 
+        user_input: &str,
+        context: &crate::context::Context
+    ) -> Result<String, String> {
+        let result = self.task_planner.create_advanced_plan_with_context(user_input, context).await?;
+        
+        // Process all pending requests
+        let mut responses = Vec::new();
+        while self.task_planner.has_pending_work() {
+            if let Some(response) = self.task_planner.process_next_request() {
+                responses.push(response);
+            }
+        }
+
+        Ok(format!("{}\nProcessed {} requests", result, responses.len()))
+    }
+
 
     /// Get overall system status
     pub fn get_status(&self) -> String {

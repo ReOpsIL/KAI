@@ -3,7 +3,7 @@
 //! This is the main entry point for the KAI application, which starts the
 //! enhanced CLI prompter for interactive usage with AI planning capabilities.
 
-use kai::cli::SimpleCliPrompter;
+use kai::cli::CliPrompter;
 use kai::llm::OpenRouterClient;
 use kai::planer::Planner;
 use std::env;
@@ -85,9 +85,17 @@ async fn run_kai_application(openrouter_client: Option<Arc<OpenRouterClient>>) -
         let planner = Planner::with_llm_client(client);
 
         // Create prompter with planner
-        match SimpleCliPrompter::with_planner(planner) {
-            Ok(p) => {
+        match CliPrompter::with_planner(planner) {
+            Ok(mut p) => {
                 println!("CLI prompter initialized successfully with AI planning");
+
+                // Initialize context
+                println!("Initializing project context...");
+                if let Err(e) = p.initialize_context().await {
+                    eprintln!("WARNING: Context initialization failed: {}", e);
+                    eprintln!("Continuing without context integration...");
+                }
+
                 p
             }
             Err(e) => {

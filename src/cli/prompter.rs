@@ -17,6 +17,8 @@ use super::{
     file_browser::{FileBrowser, SelectionResult},
     history::CommandHistory,
 };
+use crate::context::context_data_store::ContextDataStore;
+use crate::context::Context;
 use crate::planer::Planner;
 
 /// Types of output messages
@@ -46,23 +48,27 @@ impl MessageType {
 }
 
 /// Simple terminal CLI prompter
-pub struct SimpleCliPrompter {
+pub struct CliPrompter {
     config: CliConfig,
     history: CommandHistory,
     file_browser: FileBrowser,
     should_exit: bool,
     planner: Option<Planner>,
     in_file_browser: bool,
+    context: Context,
+    context_data_store: ContextDataStore,
 }
 
-impl SimpleCliPrompter {
+impl CliPrompter {
     /// Create a new simple CLI prompter instance
     pub fn new() -> io::Result<Self> {
         let config = CliConfig::default();
         let history = CommandHistory::new(config.max_history_size);
-        let file_browser = FileBrowser::new(
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
-        );
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let file_browser = FileBrowser::new(current_dir.clone());
+
+        let context = Context::new();
+        let context_data_store = ContextDataStore::new(current_dir);
 
         Ok(Self {
             config,
@@ -71,6 +77,8 @@ impl SimpleCliPrompter {
             should_exit: false,
             planner: None,
             in_file_browser: false,
+            context,
+            context_data_store,
         })
     }
 
@@ -79,6 +87,35 @@ impl SimpleCliPrompter {
         let mut prompter = Self::new()?;
         prompter.planner = Some(planner);
         Ok(prompter)
+    }
+
+    /// Initialize and update context
+    pub async fn initialize_context(&mut self) -> io::Result<()> {
+        // Get OpenRouter client from planner if available
+        let openrouter_client = self
+            .planner
+            .as_ref()
+            .and_then(|p| p.task_planner.get_llm_client())
+            .map(|arc_client| (*arc_client).clone());
+
+        // Update context with current file information
+        match self
+            .context
+            .update(&self.context_data_store, openrouter_client, false)
+            .await
+        {
+            Ok(()) => {
+                self.print_info(&format!(
+                    "Context initialized - tracking {} files",
+                    self.context.tracked_files_count()
+                ));
+            }
+            Err(e) => {
+                self.print_warning(&format!("Context initialization failed: {}", e));
+            }
+        }
+
+        Ok(())
     }
 
     /// Set planner after creation
@@ -381,13 +418,22 @@ impl SimpleCliPrompter {
 
     /// Process input through AI planner
     async fn process_ai_input(&mut self, input: &str) -> io::Result<()> {
+        // Add user input to context story
+        self.context.add_user_prompt(input.to_string());
+
         if let Some(mut planner) = self.planner.take() {
             self.print_info("Processing with AI planner...");
 
-            let planning_result = planner.create_and_execute_advanced_plan(input).await;
+            // Pass context to planner for enhanced prompt generation
+            let planning_result = planner
+                .create_and_execute_advanced_plan_with_context(input, &self.context)
+                .await;
 
             match planning_result {
                 Ok(result) => {
+                    // Add response to context story
+                    self.context.add_response(result.clone(), None);
+
                     self.print_system("=== AI Planning Result ===");
                     for line in result.lines() {
                         if line.trim().is_empty() {
@@ -398,6 +444,9 @@ impl SimpleCliPrompter {
                     }
                 }
                 Err(error) => {
+                    // Still add error response to context for learning
+                    self.context.add_response(format!("Error: {}", error), None);
+
                     self.print_error(&format!("AI planning failed: {}", error));
                     self.print_error("🦀 KAI requires working AI integration. Exiting...");
                     std::process::exit(1);

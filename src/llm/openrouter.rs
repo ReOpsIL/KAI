@@ -1,9 +1,10 @@
+use crate::tools::get_file_system_tools;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use crate::tools::get_file_system_tools;
 
 /// OpenRouter API client for handling prompts
+#[derive(Clone)]
 pub struct OpenRouterClient {
     client: Client,
     api_key: String,
@@ -172,13 +173,13 @@ pub mod utils {
     /// Build a conversation from alternating user and assistant messages
     pub fn build_conversation(messages: &[(String, String)]) -> Vec<Message> {
         let mut conversation = Vec::new();
-        
+
         for (user_msg, assistant_msg) in messages {
             conversation.push(Message {
                 role: "user".to_string(),
                 content: user_msg.clone(),
             });
-            
+
             if !assistant_msg.is_empty() {
                 conversation.push(Message {
                     role: "assistant".to_string(),
@@ -186,12 +187,15 @@ pub mod utils {
                 });
             }
         }
-        
+
         conversation
     }
 
     /// Extract the response content from a ChatResponse
     pub fn extract_response_content(response: &super::ChatResponse) -> Option<String> {
-        response.choices.first().map(|choice| choice.message.content.clone())
+        response
+            .choices
+            .first()
+            .map(|choice| choice.message.content.clone())
     }
 }

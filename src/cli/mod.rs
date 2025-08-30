@@ -23,10 +23,9 @@ pub mod prompter;
 pub mod utils;
 
 // Re-export main types for convenience
-// pub use prompter::CliPrompter;
 pub use commands::{CliCommand, CommandParser, CommandResult};
 pub use config::CliConfig;
 pub use editor::{CursorDirection, TextEditor};
 pub use file_browser::{FileBrowser, FileEntry, SelectionResult};
 pub use history::CommandHistory;
-pub use prompter::SimpleCliPrompter;
+pub use prompter::CliPrompter;
