@@ -52,6 +52,7 @@ pub struct SimpleCliPrompter {
     file_browser: FileBrowser,
     should_exit: bool,
     planner: Option<Planner>,
+    in_file_browser: bool,
 }
 
 impl SimpleCliPrompter {
@@ -69,6 +70,7 @@ impl SimpleCliPrompter {
             file_browser,
             should_exit: false,
             planner: None,
+            in_file_browser: false,
         })
     }
 
@@ -168,18 +170,21 @@ impl SimpleCliPrompter {
 
             let mut input_buffer = String::new();
             let mut cursor_pos = 0usize;
-            
+
             loop {
                 // Read events
                 if event::poll(std::time::Duration::from_millis(100))
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))? 
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
                 {
-                    let event = event::read()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    let event =
+                        event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
                     match event {
                         Event::Key(key_event) => {
-                            if self.handle_key_event(key_event, &mut input_buffer, &mut cursor_pos).await? {
+                            if self
+                                .handle_key_event(key_event, &mut input_buffer, &mut cursor_pos)
+                                .await?
+                            {
                                 break; // Line completed or menu activated
                             }
                         }
@@ -192,7 +197,12 @@ impl SimpleCliPrompter {
     }
 
     /// Handle individual key events and return true if line is complete
-    async fn handle_key_event(&mut self, key_event: KeyEvent, input_buffer: &mut String, cursor_pos: &mut usize) -> io::Result<bool> {
+    async fn handle_key_event(
+        &mut self,
+        key_event: KeyEvent,
+        input_buffer: &mut String,
+        cursor_pos: &mut usize,
+    ) -> io::Result<bool> {
         match key_event {
             // Handle Ctrl+C for exit
             KeyEvent {
@@ -261,47 +271,89 @@ impl SimpleCliPrompter {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } | KeyEvent {
+            }
+            | KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::SHIFT,
                 ..
             } => {
                 // Check for immediate menu triggers
-                if input_buffer.is_empty() && (c == '/' || c == '@') {
+                if input_buffer.is_empty() && c == '/' {
+                    // Commands menu - execute immediately
                     println!("{}", c); // Show the character
-                    
+
                     // Temporarily disable raw mode for inquire menus
                     let _ = disable_raw_mode();
-                    
-                    // Trigger the appropriate menu immediately
-                    let menu_result = if c == '/' {
-                        self.show_command_menu().await
-                    } else if c == '@' {
-                        self.show_file_browser().await
-                    } else {
-                        Ok(())
-                    };
-                    
-                    // Re-enable raw mode
+                    let menu_result = self.show_command_menu().await;
                     let _ = enable_raw_mode();
-                    
-                    // Handle any menu errors
+
                     menu_result?;
-                    
                     input_buffer.clear();
+                    *cursor_pos = 0;
                     return Ok(true);
+                } else if c == '@' && !self.in_file_browser {
+                    // File browser - insert selected path at cursor position
+                    // Only activate if not already in file browser
+                    self.in_file_browser = true;
+
+                    // Temporarily disable raw mode for inquire menus
+                    let _ = disable_raw_mode();
+                    let selected_path = self.show_file_browser().await?;
+                    let _ = enable_raw_mode();
+
+                    self.in_file_browser = false;
+
+                    if let Some(path) = selected_path {
+                        // Insert the path at cursor position
+                        input_buffer.insert_str(*cursor_pos, &path);
+                        *cursor_pos += path.len();
+
+                        // Redraw the line
+                        self.redraw_input_line(input_buffer, *cursor_pos)?;
+                    } else {
+                        // File browser was cancelled, restore current input line
+                        if !input_buffer.is_empty() {
+                            self.redraw_input_line(input_buffer, *cursor_pos)?;
+                        }
+                    }
                 } else {
-                    // Regular character input
-                    input_buffer.push(c);
-                    print!("{}", c);
-                    io::stdout().flush()?;
+                    // Regular character input at cursor position
+                    input_buffer.insert(*cursor_pos, c);
+                    *cursor_pos += 1;
+
+                    // If cursor is at end, just print the character
+                    if *cursor_pos == input_buffer.len() {
+                        print!("{}", c);
+                        io::stdout().flush()?;
+                    } else {
+                        // Cursor is in middle, need to redraw the line
+                        self.redraw_input_line(input_buffer, *cursor_pos)?;
+                    }
                 }
             }
 
             _ => {} // Ignore other key events
         }
-        
+
         Ok(false)
+    }
+
+    /// Redraw the input line with cursor at the specified position
+    fn redraw_input_line(&self, input_buffer: &str, cursor_pos: usize) -> io::Result<()> {
+        // Move to beginning of line after prompt
+        print!("\r🦀 KAI: ");
+
+        // Clear to end of line and print the buffer
+        print!("\x1B[K{}", input_buffer);
+
+        // Move cursor to correct position
+        let chars_after_cursor = input_buffer.len() - cursor_pos;
+        if chars_after_cursor > 0 {
+            print!("\x1B[{}D", chars_after_cursor); // Move left by chars_after_cursor
+        }
+
+        io::stdout().flush()?;
+        Ok(())
     }
 
     /// Process a complete line of input
@@ -466,7 +518,7 @@ impl SimpleCliPrompter {
                 Ok(entries) => entries,
                 Err(e) => {
                     self.print_error(&format!("Cannot read directory: {}", e));
-                    break;
+                    return Ok(None);
                 }
             };
 
@@ -474,23 +526,25 @@ impl SimpleCliPrompter {
                 Ok(entries) => entries,
                 Err(e) => {
                     self.print_error(&format!("Cannot get directory entries: {}", e));
-                    break;
+                    return Ok(None);
                 }
             };
 
-            let selection = Select::new(
-                &format!(
-                    "Browse: {} - Select file or directory:",
-                    self.file_browser.current_path().display()
-                ),
-                display_entries,
-            )
-            .with_page_size(15)
-            .with_help_message("Use arrow keys to navigate, Enter to select, Esc to cancel")
-            .prompt();
-            
+            let selection = Select::new("", display_entries)
+                .with_page_size(15)
+                .with_help_message("Navigate: ↑↓  Select: Enter  Cancel: Esc")
+                .prompt();
+
             match selection {
                 Ok(selected) => {
+                    // Clear the inquire output more aggressively
+                    print!("\x1B[3A"); // Move up 3 lines
+                    for _ in 0..5 {
+                        print!("\x1B[K\x1B[1B"); // Clear current line and move down
+                    }
+                    print!("\x1B[3A"); // Move back up 3 lines
+                    io::stdout().flush()?;
+
                     let result = self.file_browser.process_selection(&selected, &entries);
                     match result {
                         SelectionResult::FileSelected(path) => {
@@ -506,6 +560,15 @@ impl SimpleCliPrompter {
                     }
                 }
                 Err(InquireError::OperationCanceled) => {
+                    // Clear inquire output more aggressively for cancellation
+                    print!("\x1B[1A\x1B[K"); // Move up 1 lines
+
+                    // print!("\x1B[3A"); // Move up 3 lines
+                    // for _ in 0..5 {
+                    //     print!("\x1B[K\x1B[1B"); // Clear current line and move down
+                    // }
+                    print!("\r🦀 KAI: ");
+                    io::stdout().flush()?;
                     return Ok(None);
                 }
                 Err(e) => {
