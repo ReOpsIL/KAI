@@ -1,4 +1,4 @@
-use crate::tools::get_file_system_tools;
+use crate::tools::get_all_tools;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -109,8 +109,8 @@ impl OpenRouterClient {
         temperature: Option<f32>,
     ) -> Result<ChatResponse, Box<dyn Error>> {
         // Get file system tools and convert to JSON format for OpenRouter
-        let file_system_tools = get_file_system_tools();
-        let tools_json: Vec<serde_json::Value> = file_system_tools
+        let all_tools = get_all_tools();
+        let tools_json: Vec<serde_json::Value> = all_tools
             .iter()
             .map(|tool| serde_json::to_value(tool).unwrap())
             .collect();

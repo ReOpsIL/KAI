@@ -3,13 +3,13 @@
 //! This is the main entry point for the KAI application, which starts the
 //! enhanced CLI prompter for interactive usage with AI planning capabilities.
 
-use kai::cli::CliPrompter;
-use kai::llm::OpenRouterClient;
-use kai::planer::Planner;
 use std::env;
 use std::io::{self, Write};
 use std::process;
 use std::sync::Arc;
+use KAI::cli::CliPrompter;
+use KAI::llm::OpenRouterClient;
+use KAI::planer::Planner;
 
 #[tokio::main]
 async fn main() {

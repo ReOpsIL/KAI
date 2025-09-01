@@ -33,7 +33,7 @@
 #### **Text Operations**
 - `Ctrl+A` / `Ctrl+E` - Move to start/end of line
 - `Ctrl+K` - Delete to end of line
-- `Ctrl+U` - Delete entire line  
+- `Ctrl+U` - Delete entire line
 - `Ctrl+W` - Delete word backward
 - `Ctrl+D` / `Delete` - Delete character forward
 - `Ctrl+H` / `Backspace` - Delete character backward
@@ -60,9 +60,9 @@
 - File size formatting (B, KB, MB, GB, TB)
 
 ### 🤖 **AI Planning System**
-- **Advanced Task Planning**: Uses OpenRouter LLMs to create detailed action plans
+- **Advanced Task Planning**: Uses OpenRouter LLMs to create detailed task plans
 - **Structured Prompts**: Employs sophisticated prompt engineering for reliable results
-- **JSON Schema Parsing**: Converts AI responses to executable task structures  
+- **JSON Schema Parsing**: Converts AI responses to executable task structures
 - **Phase-Based Organization**: Analysis → Implementation → Verification workflow
 - **Dependency Management**: Handles task dependencies and execution order
 - **Fallback Support**: Graceful degradation when AI is unavailable
@@ -70,7 +70,7 @@
 ## 🛠️ Installation
 
 ### Prerequisites
-- Rust 1.70+ 
+- Rust 1.70+
 - A terminal that supports ANSI colors and UTF-8
 - OpenRouter API key (required for AI planning features)
 
@@ -105,7 +105,7 @@ cargo run
 When you start KAI for the first time with a valid API key, you'll see:
 ```
 ✅ OpenRouter client initialized successfully
-✅ CLI prompter initialized successfully  
+✅ CLI prompter initialized successfully
 🧠 AI Planning system initialized with OpenRouter
 ```
 
@@ -190,7 +190,7 @@ cargo test config
 KAI supports multiple built-in themes:
 - **Default** - Clean blue/white theme
 - **Dark** - High contrast dark theme
-- **Light** - Minimal light theme  
+- **Light** - Minimal light theme
 - **Solarized** - Popular solarized color scheme
 - **Dracula** - Modern purple/pink theme
 

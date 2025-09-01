@@ -19,7 +19,9 @@ use super::{
 };
 use crate::context::context_data_store::ContextDataStore;
 use crate::context::Context;
-use crate::planer::Planner;
+use crate::planer::{Planner, QueueRequest, TaskStatus};
+use indicatif::{ProgressBar, ProgressStyle};
+use serde_json;
 
 /// Types of output messages
 #[derive(Debug, Clone)]
@@ -57,6 +59,7 @@ pub struct CliPrompter {
     in_file_browser: bool,
     context: Context,
     context_data_store: ContextDataStore,
+    workdir: std::path::PathBuf,
 }
 
 impl CliPrompter {
@@ -65,10 +68,26 @@ impl CliPrompter {
         let config = CliConfig::default();
         let history = CommandHistory::new(config.max_history_size);
         let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        let file_browser = FileBrowser::new(current_dir.clone());
 
-        let context = Context::new();
-        let context_data_store = ContextDataStore::new(current_dir);
+        // Default workdir is "workdir" relative to current directory
+        let workdir = current_dir.join("workdir");
+
+        // Create workdir if it doesn't exist
+        if !workdir.exists() {
+            std::fs::create_dir_all(&workdir).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Failed to create workdir '{}': {}", workdir.display(), e),
+                )
+            })?;
+        }
+
+        // Initialize context and data store with workdir as root
+        let context = Context::new_with_root(workdir.clone());
+        let context_data_store = ContextDataStore::new(workdir.clone());
+
+        // Update file browser to start from workdir
+        let file_browser = FileBrowser::new(workdir.clone());
 
         Ok(Self {
             config,
@@ -79,13 +98,16 @@ impl CliPrompter {
             in_file_browser: false,
             context,
             context_data_store,
+            workdir,
         })
     }
 
     /// Create CLI prompter with planner for AI-powered input processing
     pub fn with_planner(planner: Planner) -> io::Result<Self> {
         let mut prompter = Self::new()?;
-        prompter.planner = Some(planner);
+        // Configure planner with the prompter's working directory
+        let planner_with_workdir = planner.with_workdir(&prompter.workdir);
+        prompter.planner = Some(planner_with_workdir);
         Ok(prompter)
     }
 
@@ -123,12 +145,76 @@ impl CliPrompter {
         self.planner = Some(planner);
     }
 
+    /// Get current working directory
+    pub fn get_workdir(&self) -> &std::path::Path {
+        &self.workdir
+    }
+
+    /// Set new working directory
+    pub async fn set_workdir<P: AsRef<std::path::Path>>(&mut self, path: P) -> io::Result<()> {
+        let new_workdir = path.as_ref().to_path_buf();
+
+        // Resolve relative paths
+        let new_workdir = if new_workdir.is_relative() {
+            std::env::current_dir()?.join(new_workdir)
+        } else {
+            new_workdir
+        };
+
+        // Create workdir if it doesn't exist
+        if !new_workdir.exists() {
+            std::fs::create_dir_all(&new_workdir).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Failed to create workdir '{}': {}",
+                        new_workdir.display(),
+                        e
+                    ),
+                )
+            })?;
+        }
+
+        // Verify it's a directory
+        if !new_workdir.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Path '{}' is not a directory", new_workdir.display()),
+            ));
+        }
+
+        // Update workdir and related components
+        self.workdir = new_workdir.clone();
+
+        // Update planner's working directory if available
+        if let Some(ref mut planner) = self.planner {
+            *planner = std::mem::take(planner).with_workdir(&new_workdir);
+        }
+
+        // Update context with new root
+        self.context = Context::new_with_root(new_workdir.clone());
+        self.context_data_store = ContextDataStore::new(new_workdir.clone());
+
+        // Update file browser
+        self.file_browser = FileBrowser::new(new_workdir.clone());
+
+        // Re-initialize context
+        self.initialize_context().await?;
+
+        self.print_success(&format!(
+            "Working directory set to: {}",
+            self.workdir.display()
+        ));
+        Ok(())
+    }
+
     /// Print a message with type prefix
     fn print_message(&self, message_type: MessageType, content: &str) {
         let prefix = message_type.prefix();
 
         // Use plain text formatting without timestamp to avoid any display width issues
-        println!("{} {}", prefix, content);
+        // The `\r` ensures the cursor returns to the start of the line.
+        println!("\r\x1B[K{} {}", prefix, content);
     }
 
     /// Print error message
@@ -168,18 +254,18 @@ impl CliPrompter {
 
     /// Show welcome screen
     async fn show_welcome(&self) -> io::Result<()> {
-        println!();
+        println!("\r");
         self.print_system("🦀 KAI Enhanced CLI Prompter");
         self.print_info("AI-powered terminal interface for intelligent task planning");
-        println!();
+        println!("\r");
         self.print_info("Commands:");
         self.print_info("  - Type '/' to open command menu with auto-complete");
         self.print_info("  - Type '@' to open interactive file browser");
         self.print_info("  - Type '/help' for command help");
         self.print_info("  - Ctrl+C to exit");
-        println!();
+        println!("\r");
         self.print_success("Ready! Type your prompts and press Enter...");
-        println!();
+        println!("\r");
         Ok(())
     }
 
@@ -202,7 +288,8 @@ impl CliPrompter {
     /// Main input loop with character-by-character detection
     async fn run_input_loop(&mut self) -> io::Result<()> {
         while !self.should_exit {
-            print!("🦀 KAI: ");
+            // Ensure the prompt starts on a clean line
+            print!("\r\x1B[K🦀 KAI: ");
             io::stdout().flush()?;
 
             let mut input_buffer = String::new();
@@ -248,7 +335,7 @@ impl CliPrompter {
                 ..
             } => {
                 self.should_exit = true;
-                println!();
+                println!("\r");
                 return Ok(true);
             }
 
@@ -257,7 +344,7 @@ impl CliPrompter {
                 code: KeyCode::Enter,
                 ..
             } => {
-                println!(); // Move to new line
+                println!("\r"); // Move to new line
                 if !input_buffer.trim().is_empty() {
                     self.process_line(input_buffer.trim()).await?;
                 }
@@ -377,11 +464,11 @@ impl CliPrompter {
 
     /// Redraw the input line with cursor at the specified position
     fn redraw_input_line(&self, input_buffer: &str, cursor_pos: usize) -> io::Result<()> {
-        // Move to beginning of line after prompt
-        print!("\r🦀 KAI: ");
+        // Move to beginning of line and clear entire line
+        print!("\r\x1B[K");
 
-        // Clear to end of line and print the buffer
-        print!("\x1B[K{}", input_buffer);
+        // Print the fresh prompt and buffer
+        print!("🦀 KAI: {}", input_buffer);
 
         // Move cursor to correct position
         let chars_after_cursor = input_buffer.len() - cursor_pos;
@@ -395,6 +482,10 @@ impl CliPrompter {
 
     /// Process a complete line of input
     async fn process_line(&mut self, input: &str) -> io::Result<()> {
+        // Clear any residual input line display
+        print!("\r\x1B[K");
+        io::stdout().flush()?;
+
         // Add to history
         self.history.add_command(input.to_string());
 
@@ -412,7 +503,7 @@ impl CliPrompter {
         // Process with AI planner
         self.process_ai_input(input).await?;
 
-        println!(); // Add spacing after processing
+        println!("\r"); // Add spacing after processing
         Ok(())
     }
 
@@ -422,12 +513,22 @@ impl CliPrompter {
         self.context.add_user_prompt(input.to_string());
 
         if let Some(mut planner) = self.planner.take() {
-            self.print_info("Processing with AI planner...");
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner:.blue} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message("Processing with AI planner...");
+            pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
             // Pass context to planner for enhanced prompt generation
             let planning_result = planner
                 .create_and_execute_advanced_plan_with_context(input, &self.context)
                 .await;
+
+            pb.finish_and_clear();
 
             match planning_result {
                 Ok(result) => {
@@ -437,9 +538,138 @@ impl CliPrompter {
                     self.print_system("=== AI Planning Result ===");
                     for line in result.lines() {
                         if line.trim().is_empty() {
-                            println!();
+                            println!("\r");
                         } else {
                             self.print_planning(line);
+                        }
+                    }
+
+                    // --- Main Execution Loop ---
+                    let plan_id = planner.task_planner.active_plans.last().unwrap().id.clone();
+                    while planner.task_planner.execution_queue.has_pending_requests() {
+                        if let Some(request) = planner.task_planner.execution_queue.pop_request() {
+                            if let QueueRequest::TaskExecution { task, .. } = request {
+                                self.print_info(&format!("Executing task: {}...", task.title));
+                                let response = planner.task_executor.execute_task(&task).await;
+
+                                if response.content.contains("Decomposition needed") {
+                                    // Task needs to be decomposed
+                                    let sub_tasks =
+                                        planner.task_planner.decompose_task(&task).await.unwrap();
+                                    planner
+                                        .task_planner
+                                        .replace_task_with_subtasks(&plan_id, task.id, sub_tasks)
+                                        .unwrap();
+                                } else if response.success {
+                                    // Task was executed successfully
+                                    let current_plan = planner
+                                        .task_planner
+                                        .active_plans
+                                        .iter_mut()
+                                        .find(|p| p.id == plan_id)
+                                        .unwrap();
+                                    if let Some(t) = current_plan.find_task_by_id(task.id) {
+                                        t.set_status(TaskStatus::Completed);
+                                    }
+
+                                    // Display the task result
+                                    self.print_success(&format!(
+                                        "✅ Task completed: {}",
+                                        task.title
+                                    ));
+                                    if !response.content.trim().is_empty() {
+                                        self.print_system("📋 Task Result:");
+                                        // Parse and format the JSON result if possible
+                                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                                            &response.content,
+                                        ) {
+                                            match &parsed {
+                                                serde_json::Value::Object(obj)
+                                                    if obj.contains_key("content") =>
+                                                {
+                                                    if let Some(content) = obj["content"].as_str() {
+                                                        for line in content.lines() {
+                                                            self.print_info(&format!("  {}", line));
+                                                        }
+                                                    }
+                                                }
+                                                _ => {
+                                                    let formatted =
+                                                        serde_json::to_string_pretty(&parsed)
+                                                            .unwrap_or_else(|_| {
+                                                                response.content.clone()
+                                                            });
+                                                    for line in formatted.lines() {
+                                                        self.print_info(&format!("  {}", line));
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // Raw content
+                                            for line in response.content.lines() {
+                                                self.print_info(&format!("  {}", line));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Task failed
+                                    let current_plan = planner
+                                        .task_planner
+                                        .active_plans
+                                        .iter_mut()
+                                        .find(|p| p.id == plan_id)
+                                        .unwrap();
+                                    if let Some(t) = current_plan.find_task_by_id(task.id) {
+                                        t.set_status(TaskStatus::Failed);
+                                    }
+
+                                    // Display detailed failure information
+                                    self.print_error(&format!("❌ Task failed: {}", task.title));
+                                    self.print_error(&format!("🔧 Tool: {}", task.tool));
+                                    self.print_error(&format!("🎯 Target: {}", task.target));
+                                    self.print_system("📋 Error Details:");
+
+                                    // Parse and format the JSON error if possible
+                                    if let Ok(parsed) =
+                                        serde_json::from_str::<serde_json::Value>(&response.content)
+                                    {
+                                        if let serde_json::Value::Object(obj) = &parsed {
+                                            if let Some(error_msg) =
+                                                obj.get("error").and_then(|v| v.as_str())
+                                            {
+                                                self.print_error(&format!("  {}", error_msg));
+                                            } else {
+                                                let formatted =
+                                                    serde_json::to_string_pretty(&parsed)
+                                                        .unwrap_or_else(|_| {
+                                                            response.content.clone()
+                                                        });
+                                                for line in formatted.lines() {
+                                                    self.print_error(&format!("  {}", line));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Raw error content
+                                        for line in response.content.lines() {
+                                            self.print_error(&format!("  {}", line));
+                                        }
+                                    }
+                                    break; // Stop execution on failure
+                                }
+
+                                // Refresh the queue with newly available tasks
+                                let current_plan = planner
+                                    .task_planner
+                                    .active_plans
+                                    .iter()
+                                    .find(|p| p.id == plan_id)
+                                    .unwrap();
+                                planner
+                                    .task_planner
+                                    .execution_queue
+                                    .push_plan_tasks(current_plan);
+                            }
                         }
                     }
                 }
@@ -509,6 +739,26 @@ impl CliPrompter {
                 self.should_exit = true;
                 CommandResult::Exit
             }
+            CliCommand::Workdir => {
+                if _args.is_empty() || _args[0] == "show" {
+                    // Show current workdir
+                    self.print_system("=== Working Directory ===");
+                    self.print_info(&format!("Current: {}", self.workdir.display()));
+                    CommandResult::Success("Working directory displayed".to_string())
+                } else {
+                    // Set new workdir
+                    let new_path = &_args[0];
+                    match self.set_workdir(new_path).await {
+                        Ok(()) => CommandResult::Success(format!(
+                            "Working directory set to: {}",
+                            new_path
+                        )),
+                        Err(e) => {
+                            CommandResult::Error(format!("Failed to set working directory: {}", e))
+                        }
+                    }
+                }
+            }
             _ => {
                 self.print_warning(&format!(
                     "Command '{:?}' not available in simple mode",
@@ -549,7 +799,7 @@ impl CliPrompter {
                 }
             }
             Err(InquireError::OperationCanceled) => {
-                // Menu was cancelled - no action needed
+                // Menu was cancelled - no task needed
             }
             Err(e) => {
                 self.print_error(&format!("Command menu error: {}", e));

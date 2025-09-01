@@ -44,15 +44,16 @@
 //!
 //! All tools support wildcard patterns (*, **, ?) and provide comprehensive error handling.
 
-pub mod tools;
-pub mod session;
-pub mod context;
 pub mod cli;
+pub mod context;
+pub mod llm;
 pub mod planer;
 pub mod prompts;
-pub mod llm;
+pub mod session;
+pub mod tools;
 
 // Re-export commonly used types for convenience
-pub use tools::{FileSystemTool, FileSystemOperations, ToolResult, get_file_system_tools};
-pub use llm::{OpenRouterClient, ChatRequest, ChatResponse, Message};
+pub use llm::{ChatRequest, ChatResponse, Message, OpenRouterClient};
 pub use prompts::PromptManager;
+pub use tools::file_system::{FileSystemOperations, FileSystemTool, ToolResult};
+pub use tools::get_all_tools;

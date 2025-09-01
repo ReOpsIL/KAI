@@ -19,6 +19,7 @@ pub enum CliCommand {
     Load,
     Theme,
     KeyBinds,
+    Workdir,
 }
 
 impl CliCommand {
@@ -36,6 +37,7 @@ impl CliCommand {
             "load" => Some(Self::Load),
             "theme" | "themes" => Some(Self::Theme),
             "keybinds" | "keys" | "bindings" => Some(Self::KeyBinds),
+            "workdir" | "wd" | "workspace" => Some(Self::Workdir),
             _ => None,
         }
     }
@@ -54,6 +56,7 @@ impl CliCommand {
             Self::Load => "Load saved session",
             Self::Theme => "Change color theme",
             Self::KeyBinds => "View and edit key bindings",
+            Self::Workdir => "Set or view the current working directory for operations",
         }
     }
     
@@ -71,6 +74,7 @@ impl CliCommand {
             Self::Load => "/load [session_name]",
             Self::Theme => "/theme [theme_name]",
             Self::KeyBinds => "/keybinds [show|edit]",
+            Self::Workdir => "/workdir [path|show]",
         }
     }
     
@@ -84,6 +88,7 @@ impl CliCommand {
             Self::Templates | Self::Export | Self::Save | Self::Load => CommandCategory::Session,
             Self::Quit => CommandCategory::Control,
             Self::Theme => CommandCategory::Display,
+            Self::Workdir => CommandCategory::Navigation,
         }
     }
     
@@ -105,6 +110,7 @@ impl CliCommand {
             Self::Load,
             Self::Theme,
             Self::KeyBinds,
+            Self::Workdir,
             Self::Quit,
         ]
     }
@@ -221,6 +227,7 @@ impl fmt::Display for CliCommand {
             Self::Load => "Load",
             Self::Theme => "Theme",
             Self::KeyBinds => "KeyBinds",
+            Self::Workdir => "Workdir",
         };
         write!(f, "{}", name)
     }

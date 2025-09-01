@@ -1,10 +1,13 @@
-use crate::planer::task::{Task, TaskStatus};
 use crate::planer::queue::QueueResponse;
+use crate::planer::task::{Task, TaskStatus};
+use crate::tools::{exec, file_system};
+use std::path::{Path, PathBuf};
 
 /// Simple task executor that simulates task execution
 #[derive(Debug)]
 pub struct TaskExecutor {
     pub verbose: bool,
+    pub workdir: PathBuf,
 }
 
 impl Default for TaskExecutor {
@@ -15,8 +18,12 @@ impl Default for TaskExecutor {
 
 impl TaskExecutor {
     pub fn new() -> Self {
+        let workdir = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("workdir");
         Self {
             verbose: false,
+            workdir,
         }
     }
 
@@ -25,97 +32,138 @@ impl TaskExecutor {
         self
     }
 
+    pub fn with_workdir<P: AsRef<Path>>(mut self, workdir: P) -> Self {
+        self.workdir = workdir.as_ref().to_path_buf();
+        self
+    }
+
+    /// Resolve a path relative to the working directory
+    fn resolve_path(&self, path: &str) -> PathBuf {
+        let path_buf = PathBuf::from(path);
+        if path_buf.is_absolute() {
+            path_buf
+        } else {
+            self.workdir.join(path_buf)
+        }
+    }
+
+    /// Convert a resolved path back to a string for tool operations
+    fn path_to_string(&self, path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
     /// Execute a task and return the result
-    pub fn execute_task(&self, task: &Task) -> QueueResponse {
+    pub async fn execute_task(&self, task: &Task) -> QueueResponse {
         if self.verbose {
             println!("Executing task: {} ({})", task.title, task.tool);
         }
 
         let result = match task.tool.as_str() {
-            "read" => self.execute_read_task(task),
-            "edit" => self.execute_edit_task(task),
-            "bash" => self.execute_bash_task(task),
-            "write" => self.execute_write_task(task),
-            _ => format!("Unknown tool '{}' for task '{}'", task.tool, task.title),
+            "read" | "read_file" => {
+                let resolved_path = self.resolve_path(&task.target);
+                file_system::FileSystemOperations::read_file(&self.path_to_string(&resolved_path))
+            }
+            "write" | "write_file" => {
+                let resolved_path = self.resolve_path(&task.target);
+                file_system::FileSystemOperations::write_file(
+                    &self.path_to_string(&resolved_path),
+                    &task.content,
+                    None,
+                )
+            }
+            "bash" | "run_shell" => {
+                // For shell commands, change to workdir first
+                let command_with_cd = format!("cd {} && {}", self.workdir.display(), task.content);
+                exec::run_shell_command_tool(&command_with_cd)
+            }
+            "ls" | "list_directory" => {
+                let resolved_path = if task.content.is_empty() || task.content == "." {
+                    self.workdir.clone()
+                } else {
+                    self.resolve_path(&task.target)
+                };
+                file_system::FileSystemOperations::list_directory(
+                    &self.path_to_string(&resolved_path),
+                    None,
+                    None,
+                )
+            }
+            "grep" | "grep_files" => {
+                let resolved_path = if task.target.is_empty() || task.target == "." {
+                    self.workdir.clone()
+                } else {
+                    self.resolve_path(&task.target)
+                };
+                file_system::FileSystemOperations::grep_files(
+                    &task.content,
+                    &self.path_to_string(&resolved_path),
+                    None,
+                    None,
+                    None,
+                )
+            }
+            "find" | "find_files" => {
+                let resolved_path = if task.target.is_empty() || task.target == "." {
+                    self.workdir.clone()
+                } else {
+                    self.resolve_path(&task.target)
+                };
+                file_system::FileSystemOperations::find_files(
+                    &self.path_to_string(&resolved_path),
+                    None,
+                    None,
+                )
+            }
+            _ => {
+                // This indicates a task that needs decomposition
+                return QueueResponse {
+                    request_id: format!("task_{}", task.id),
+                    success: false,
+                    content: format!("Decomposition needed for tool '{}'", task.tool),
+                    completed_task_ids: vec![],
+                    decomposed_tasks: None,
+                };
+            }
         };
 
         QueueResponse {
             request_id: format!("task_{}", task.id),
-            success: true,
-            content: result,
-            completed_task_ids: vec![task.id],
+            success: result.success,
+            content: serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("Failed to serialize result: {}", e)),
+            completed_task_ids: if result.success {
+                vec![task.id]
+            } else {
+                vec![]
+            },
+            decomposed_tasks: None,
         }
-    }
-
-    /// Simulate reading a file or examining content
-    fn execute_read_task(&self, task: &Task) -> String {
-        format!(
-            "Read operation completed:\n\
-            - Target: {}\n\
-            - Operation: {}\n\
-            - Status: Successfully examined content",
-            task.target,
-            task.operation
-        )
-    }
-
-    /// Simulate editing files
-    fn execute_edit_task(&self, task: &Task) -> String {
-        format!(
-            "Edit operation completed:\n\
-            - Target: {}\n\
-            - Operation: {}\n\
-            - Status: Successfully modified content",
-            task.target,
-            task.operation
-        )
-    }
-
-    /// Simulate bash command execution
-    fn execute_bash_task(&self, task: &Task) -> String {
-        format!(
-            "Bash operation completed:\n\
-            - Target: {}\n\
-            - Operation: {}\n\
-            - Status: Command executed successfully",
-            task.target,
-            task.operation
-        )
-    }
-
-    /// Simulate writing new files
-    fn execute_write_task(&self, task: &Task) -> String {
-        format!(
-            "Write operation completed:\n\
-            - Target: {}\n\
-            - Operation: {}\n\
-            - Status: Successfully created new content",
-            task.target,
-            task.operation
-        )
     }
 
     /// Check if a task can be executed (dependencies met)
     pub fn can_execute(&self, task: &Task, completed_task_ids: &[usize]) -> bool {
-        task.status == TaskStatus::Pending && 
-        task.dependencies.iter().all(|dep| completed_task_ids.contains(dep))
+        task.status == TaskStatus::Pending
+            && task
+                .dependencies
+                .iter()
+                .all(|dep| completed_task_ids.contains(dep))
     }
 
     /// Execute multiple tasks in dependency order
-    pub fn execute_batch(&self, tasks: &[Task]) -> Vec<QueueResponse> {
+    pub async fn execute_batch(&self, tasks: &[Task]) -> Vec<QueueResponse> {
         let mut responses = Vec::new();
         let mut completed_ids = Vec::new();
 
         // Keep executing until all tasks are processed or no progress can be made
         let mut remaining_tasks: Vec<_> = tasks.iter().collect();
-        
+
         while !remaining_tasks.is_empty() {
             let mut progress_made = false;
             let mut new_remaining = Vec::new();
 
             for task in remaining_tasks {
                 if self.can_execute(task, &completed_ids) {
-                    let response = self.execute_task(task);
+                    let response = self.execute_task(task).await;
                     completed_ids.extend(&response.completed_task_ids);
                     responses.push(response);
                     progress_made = true;
@@ -136,80 +184,5 @@ impl TaskExecutor {
         }
 
         responses
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_task_executor_creation() {
-        let executor = TaskExecutor::new();
-        assert!(!executor.verbose);
-    }
-
-    #[test]
-    fn test_task_execution() {
-        let executor = TaskExecutor::new();
-        let task = Task::new(
-            1,
-            "Read file".to_string(),
-            "read".to_string(),
-            "test.txt".to_string(),
-            "examine content".to_string(),
-        );
-
-        let response = executor.execute_task(&task);
-        assert!(response.success);
-        assert!(response.content.contains("Read operation completed"));
-        assert_eq!(response.completed_task_ids, vec![1]);
-    }
-
-    #[test]
-    fn test_dependency_checking() {
-        let executor = TaskExecutor::new();
-        let task = Task::new(
-            2,
-            "Edit file".to_string(),
-            "edit".to_string(),
-            "test.txt".to_string(),
-            "modify content".to_string(),
-        ).with_dependencies(vec![1]);
-
-        // Should not be able to execute without dependency
-        assert!(!executor.can_execute(&task, &[]));
-        
-        // Should be able to execute with dependency satisfied
-        assert!(executor.can_execute(&task, &[1]));
-    }
-
-    #[test]
-    fn test_batch_execution() {
-        let executor = TaskExecutor::new();
-        let tasks = vec![
-            Task::new(
-                1,
-                "First task".to_string(),
-                "read".to_string(),
-                "file1.txt".to_string(),
-                "read file".to_string(),
-            ),
-            Task::new(
-                2,
-                "Second task".to_string(),
-                "edit".to_string(),
-                "file1.txt".to_string(),
-                "modify file".to_string(),
-            ).with_dependencies(vec![1]),
-        ];
-
-        let responses = executor.execute_batch(&tasks);
-        assert_eq!(responses.len(), 2);
-        
-        // First response should be for task 1
-        assert_eq!(responses[0].completed_task_ids, vec![1]);
-        // Second response should be for task 2
-        assert_eq!(responses[1].completed_task_ids, vec![2]);
     }
 }

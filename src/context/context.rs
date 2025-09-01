@@ -83,7 +83,7 @@ impl Context {
         Ok(())
     }
     
-    /// Perform a full context update (harvest all files)
+    /// Perform a full context update (harvest all files) with optimization for unchanged files
     async fn perform_full_update(
         &mut self,
         data_store: &crate::context::context_data_store::ContextDataStore,
@@ -100,8 +100,16 @@ impl Context {
             harvester = harvester.with_openrouter(client);
         }
         
-        // Run harvester to get all modules and files
-        let modules = harvester.harvest().await?;
+        // Get context directory path for optimization
+        let context_dir = data_store.context_dir_path();
+        let context_dir_option = if context_dir.exists() {
+            Some(context_dir)
+        } else {
+            None
+        };
+        
+        // Run optimized harvester to get all modules and files
+        let modules = harvester.harvest_with_context_dir(context_dir_option).await?;
         
         // Update file timestamps
         self.update_file_timestamps(&modules)?;
@@ -216,12 +224,19 @@ impl Context {
             .and_then(|ext| ext.to_str())
             .map(|s| s.to_lowercase());
         
+        // Get file modification time
+        let last_modified = metadata
+            .modified()
+            .ok()
+            .map(|time| DateTime::<Utc>::from(time));
+        
         Ok(FileInfo {
             path: file_path.to_path_buf(),
             relative_path,
             extension,
             size: metadata.len(),
             description: None,
+            last_modified,
         })
     }
     

@@ -1,5 +1,6 @@
 use crate::cli::config::OpenRouterConfig;
 use crate::llm::OpenRouterClient;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -14,6 +15,7 @@ pub struct FileInfo {
     pub extension: Option<String>,
     pub size: u64,
     pub description: Option<String>,
+    pub last_modified: Option<DateTime<Utc>>,
 }
 
 /// Module information for higher-level architecture analysis
@@ -219,17 +221,60 @@ impl Harvester {
                     .and_then(|ext| ext.to_str())
                     .map(|s| s.to_lowercase());
 
+                // Get file modification time
+                let last_modified = metadata
+                    .modified()
+                    .ok()
+                    .map(|time| DateTime::<Utc>::from(time));
+
                 files.push(FileInfo {
                     path: path.to_path_buf(),
                     relative_path,
                     extension,
                     size: metadata.len(),
                     description: None,
+                    last_modified,
                 });
             }
         }
 
         Ok(files)
+    }
+
+    /// Check if context file for this source file already exists and is up-to-date
+    fn is_context_file_up_to_date(&self, file_info: &FileInfo, context_dir: &Path) -> bool {
+        // Create safe filename from the relative path (same logic as ContextDataStore)
+        let safe_filename = self.create_safe_filename_for_context(&file_info.relative_path, "file");
+        let context_file_path = context_dir.join(format!("{}.md", safe_filename));
+        
+        // Check if context file exists
+        if !context_file_path.exists() {
+            return false;
+        }
+        
+        // Get context file modification time
+        if let Ok(context_metadata) = fs::metadata(&context_file_path) {
+            if let Ok(context_modified) = context_metadata.modified() {
+                let context_modified_dt = DateTime::<Utc>::from(context_modified);
+                
+                // Compare with source file modification time
+                if let Some(source_modified) = file_info.last_modified {
+                    // Context file is up-to-date if it's newer than or equal to source file
+                    return context_modified_dt >= source_modified;
+                }
+            }
+        }
+        
+        false
+    }
+
+    /// Create a safe filename from path (mirrors ContextDataStore logic)
+    fn create_safe_filename_for_context(&self, path: &Path, prefix: &str) -> String {
+        let path_str = path.to_string_lossy();
+        let safe_path = path_str
+            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+            .replace(' ', "_");
+        format!("{}_{}", prefix, safe_path)
     }
 
     /// Generate description for a single file using LLM
@@ -372,22 +417,42 @@ Source code:
         }
     }
 
-    /// Generate descriptions for all files using LLM
+    /// Generate descriptions for all files using LLM, skipping files with up-to-date context
     pub async fn generate_file_descriptions(
         &self,
         files: &mut [FileInfo],
+        context_dir: Option<&Path>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.openrouter_client.is_none() {
             return Err("OpenRouter client not configured".into());
         }
 
+        let mut processed_count = 0;
+        let mut skipped_count = 0;
+        let total_count = files.len();
+
         for file_info in files.iter_mut() {
+            // Check if we should skip this file due to up-to-date context
+            if let Some(ctx_dir) = context_dir {
+                if self.is_context_file_up_to_date(file_info, ctx_dir) {
+                    println!(
+                        "Skipping {} (context file is up-to-date)",
+                        file_info.relative_path.display()
+                    );
+                    skipped_count += 1;
+                    continue;
+                }
+            }
+
             match self.generate_file_description(file_info).await {
                 Ok(description) => {
                     file_info.description = Some(description);
+                    processed_count += 1;
                     println!(
-                        "Generated description for: {}",
-                        file_info.relative_path.display()
+                        "Generated description for: {} ({}/{} processed)",
+                        file_info.relative_path.display(),
+                        processed_count,
+                        total_count - skipped_count
                     );
                 }
                 Err(e) => {
@@ -403,6 +468,11 @@ Source code:
             // Small delay to avoid rate limiting
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
+
+        println!(
+            "File description generation complete: {} processed, {} skipped, {} total",
+            processed_count, skipped_count, total_count
+        );
 
         Ok(())
     }
@@ -583,15 +653,23 @@ File Details:
         Ok(())
     }
 
-    /// Run the complete harvesting process
+    /// Run the complete harvesting process with optimization for unchanged files
     pub async fn harvest(&self) -> Result<Vec<ModuleInfo>, Box<dyn std::error::Error>> {
+        self.harvest_with_context_dir(None).await
+    }
+
+    /// Run the complete harvesting process with context directory optimization
+    pub async fn harvest_with_context_dir(
+        &self,
+        context_dir: Option<&Path>,
+    ) -> Result<Vec<ModuleInfo>, Box<dyn std::error::Error>> {
         println!("Starting file discovery...");
         let mut files = self.discover_files()?;
         println!("Discovered {} files", files.len());
 
         if self.openrouter_client.is_some() {
             println!("Generating file descriptions...");
-            self.generate_file_descriptions(&mut files).await?;
+            self.generate_file_descriptions(&mut files, context_dir).await?;
         }
 
         println!("Organizing into modules...");
@@ -669,5 +747,52 @@ mod tests {
         assert!(files
             .iter()
             .any(|f| f.relative_path == Path::new("Cargo.toml")));
+    }
+
+    #[tokio::test]
+    async fn test_context_file_optimization() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_path_buf();
+        
+        // Create test source file
+        fs::create_dir_all(temp_path.join("src")).unwrap();
+        let source_file = temp_path.join("src/test.rs");
+        fs::write(&source_file, "fn test() {}").unwrap();
+        
+        // Create context directory
+        let context_dir = temp_path.join(".context");
+        fs::create_dir_all(&context_dir).unwrap();
+        
+        // Create harvester config
+        let config = HarvesterConfig {
+            root_path: temp_path.clone(),
+            ..Default::default()
+        };
+        let harvester = Harvester::new(config);
+        
+        // Create context file with the exact same naming logic as the harvester
+        let safe_filename = harvester.create_safe_filename_for_context(&PathBuf::from("src/test.rs"), "file");
+        let context_file = context_dir.join(format!("{}.md", safe_filename));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await; // Ensure different timestamps
+        fs::write(&context_file, "# Test Context\nAlready processed").unwrap();
+        
+        let files = harvester.discover_files().unwrap();
+        assert_eq!(files.len(), 1);
+        
+        let file_info = &files[0];
+        
+        // Test that context file is detected as up-to-date
+        assert!(harvester.is_context_file_up_to_date(file_info, &context_dir));
+        
+        // Modify source file to be newer
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        fs::write(&source_file, "fn test() { println!(); }").unwrap();
+        
+        // Rediscover files to get new timestamp
+        let updated_files = harvester.discover_files().unwrap();
+        let updated_file_info = &updated_files[0];
+        
+        // Test that context file is now detected as outdated
+        assert!(!harvester.is_context_file_up_to_date(updated_file_info, &context_dir));
     }
 }

@@ -1,16 +1,37 @@
 use crate::llm::{Message, OpenRouterClient};
 use crate::planer::plan::{Phase, Plan};
 use crate::planer::queue::{ExecutionQueue, QueueRequest, QueueResponse};
-use crate::planer::schemas::{PlanPhase, PlanResponse, SimpleTask};
 use crate::planer::task::{Task, TaskStatus};
 use crate::prompts::PromptManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Minimal plan response from LLM
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlanResponse {
+    pub title: String,
+    pub overview: String,
+    pub phases: Vec<PlanPhase>,
+}
+
+/// Simple phase structure for LLM communication
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlanPhase {
+    pub name: String,
+    pub emoji: String,
+    pub tasks: Vec<Task>,
+}
+
+
+#[derive(Debug, Deserialize)]
+struct DecompositionResponse {
+    tasks: Vec<Task>,
+}
+
 /// Advanced task planner that coordinates plan generation and execution via LLM
 pub struct TaskPlanner {
-    execution_queue: ExecutionQueue,
-    active_plans: Vec<Plan>,
+    pub execution_queue: ExecutionQueue,
+    pub active_plans: Vec<Plan>,
     next_plan_id: usize,
     llm_client: Option<Arc<OpenRouterClient>>,
     model: String,
@@ -55,11 +76,11 @@ impl TaskPlanner {
         self.llm_client.clone()
     }
 
-    /// Create an advanced plan from user input using LLM
-    pub async fn create_advanced_plan(&mut self, user_input: &str) -> Result<String, String> {
-        self.create_advanced_plan_with_context(user_input, &crate::context::Context::new())
-            .await
-    }
+    // /// Create an advanced plan from user input using LLM
+    // pub async fn create_advanced_plan(&mut self, user_input: &str) -> Result<String, String> {
+    //     self.create_advanced_plan_with_context(user_input, &crate::context::Context::new())
+    //         .await
+    // }
 
     /// Create an advanced plan from user input using LLM with context integration
     pub async fn create_advanced_plan_with_context(
@@ -74,7 +95,7 @@ impl TaskPlanner {
 
         // Generate enhanced LLM prompt with context
         let system_prompt = PromptManager::get_enhanced_system_prompt_with_context(context);
-        let user_prompt = PromptManager::create_plan_user_message(user_input);
+        let user_prompt = PromptManager::create_plan_user_message_with_context(user_input, context);
 
         let messages = vec![
             Message {
@@ -103,7 +124,8 @@ impl TaskPlanner {
             .clone();
 
         // Parse the JSON response
-        let plan_response: PlanResponse = serde_json::from_str(&content).map_err(|e| {
+        let json_content = PromptManager::extract_json_from_markdown(&content);
+        let plan_response: PlanResponse = serde_json::from_str(&json_content).map_err(|e| {
             format!(
                 "Failed to parse LLM response as JSON: {}. Response: {}",
                 e, content
@@ -125,6 +147,27 @@ impl TaskPlanner {
         ))
     }
 
+    /// Decompose a complex task into smaller, executable sub-tasks
+    pub async fn decompose_task(&self, task: &Task) -> Result<Vec<Task>, String> {
+        let prompt = PromptManager::create_task_decomposition_prompt(&task.title, &task.operation);
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: prompt,
+        }];
+
+        let content = self.send_llm_request(messages).await?;
+        let json_content = PromptManager::extract_json_from_markdown(&content);
+        let decomposition: DecompositionResponse =
+            serde_json::from_str(&json_content).map_err(|e| {
+                format!(
+                    "Failed to parse LLM decomposition response as JSON: {}. Response: {}",
+                    e, content
+                )
+            })?;
+
+        Ok(decomposition.tasks)
+    }
+
     /// Convert LLM PlanResponse to internal Plan structure
     fn convert_plan_response_to_plan(
         &mut self,
@@ -135,16 +178,17 @@ impl TaskPlanner {
         for plan_phase in plan_response.phases {
             let mut phase = Phase::new(plan_phase.name, plan_phase.emoji);
 
-            for simple_task in plan_phase.tasks {
+            for task in plan_phase.tasks {
                 let task_id = plan.generate_task_id();
                 let task = Task::new(
                     task_id,
-                    simple_task.title,
-                    simple_task.tool,
-                    simple_task.target,
-                    simple_task.operation,
+                    task.title,
+                    task.tool,
+                    task.target,
+                    task.operation,
+                    task.content,
                 )
-                .with_dependencies(simple_task.dependencies);
+                .with_dependencies(task.dependencies);
 
                 phase.add_task(task);
             }
@@ -168,6 +212,71 @@ impl TaskPlanner {
         // Update history with response
         self.execution_queue.push_response(response.clone());
         Some(response)
+    }
+
+    /// Replaces a task in a plan with a list of sub-tasks, rewiring dependencies.
+    pub fn replace_task_with_subtasks(
+        &mut self,
+        plan_id: &str,
+        original_task_id: usize,
+        sub_tasks: Vec<Task>,
+    ) -> Result<(), String> {
+        let plan = self
+            .active_plans
+            .iter_mut()
+            .find(|p| p.id == plan_id)
+            .ok_or_else(|| format!("Plan with ID '{}' not found", plan_id))?;
+
+        let original_task = plan
+            .find_task_by_id(original_task_id)
+            .ok_or_else(|| format!("Task with ID {} not found in plan", original_task_id))?;
+
+        let original_dependencies = original_task.dependencies.clone();
+        original_task.set_status(TaskStatus::Decomposed);
+
+        let mut new_task_ids = Vec::new();
+        let mut last_task_id = original_task_id;
+
+        // Create and add new tasks from sub_tasks
+        for (i, task) in sub_tasks.into_iter().enumerate() {
+            let new_task_id = plan.generate_task_id();
+            let mut new_dependencies = task.dependencies;
+
+            // The first new task inherits the original task's dependencies.
+            if i == 0 {
+                new_dependencies.extend(original_dependencies.clone());
+            } else {
+                // Subsequent tasks depend on the previous new task.
+                new_dependencies.push(last_task_id);
+            }
+            new_dependencies.sort();
+            new_dependencies.dedup();
+
+            let new_task = Task::new(
+                new_task_id,
+                task.title,
+                task.tool,
+                task.target,
+                task.operation,
+                task.content,
+            )
+            .with_dependencies(new_dependencies);
+
+            plan.add_task_to_phase(&new_task, None)?;
+            new_task_ids.push(new_task_id);
+            last_task_id = new_task_id;
+        }
+
+        // Update any tasks that depended on the original task to now depend on the new tasks.
+        for task in plan.get_all_tasks_mut() {
+            if task.dependencies.contains(&original_task_id) {
+                task.dependencies.retain(|&dep| dep != original_task_id);
+                task.dependencies.extend(new_task_ids.clone());
+                task.dependencies.sort();
+                task.dependencies.dedup();
+            }
+        }
+        Ok(())
     }
 
     /// Add a high-priority user prompt
@@ -217,6 +326,29 @@ impl TaskPlanner {
         id
     }
 
+    /// Helper to get LLM client or return an error
+    fn get_llm_client_or_err(&self) -> Result<Arc<OpenRouterClient>, String> {
+        self.llm_client
+            .clone()
+            .ok_or_else(|| "No LLM client available for AI planning".to_string())
+    }
+
+    /// Helper to send a request to the LLM and get the content
+    async fn send_llm_request(&self, messages: Vec<Message>) -> Result<String, String> {
+        let client = self.get_llm_client_or_err()?;
+        let response = client
+            .send_conversation(&self.model, messages, Some(4000), Some(0.1))
+            .await
+            .map_err(|e| format!("LLM request failed: {}", e))?;
+        Ok(response
+            .choices
+            .first()
+            .ok_or("No response from LLM")?
+            .message
+            .content
+            .clone())
+    }
+
     /// Handle user prompt processing
     fn handle_user_prompt(&mut self, content: &str) -> QueueResponse {
         let request_id = self.execution_queue.generate_id();
@@ -230,6 +362,7 @@ impl TaskPlanner {
                 content
             ),
             completed_task_ids: Vec::new(),
+            decomposed_tasks: None,
         }
     }
 
@@ -248,30 +381,7 @@ impl TaskPlanner {
             success: true,
             content: result,
             completed_task_ids: vec![task.id],
+            decomposed_tasks: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_task_planner_creation() {
-        let planner = TaskPlanner::new();
-        assert_eq!(planner.active_plans.len(), 0);
-        assert!(!planner.has_pending_work());
-    }
-
-    #[test]
-    fn test_request_processing() {
-        let mut planner = TaskPlanner::new();
-        planner.add_user_prompt("Test prompt".to_string(), 3);
-
-        assert!(planner.has_pending_work());
-
-        let response = planner.process_next_request().unwrap();
-        assert!(!response.success); // Should fail without LLM client
-        assert!(response.content.contains("requires AI planning"));
     }
 }

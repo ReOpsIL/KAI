@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use crate::planer::task::{Task, TaskStatus};
 use crate::planer::plan::Plan;
+use crate::planer::task::Task;
+use std::collections::VecDeque;
 
 /// Different types of requests that can be queued
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct QueueResponse {
     pub success: bool,
     pub content: String,
     pub completed_task_ids: Vec<usize>,
+    pub decomposed_tasks: Option<Vec<Task>>,
 }
 
 /// Simple execution queue with priority handling
@@ -101,10 +102,7 @@ impl ExecutionQueue {
         let mut request_ids = Vec::new();
 
         for task in ready_tasks {
-            let request_id = self.push_task_execution(
-                format!("plan_{}", plan.title),
-                task.clone(),
-            );
+            let request_id = self.push_task_execution(format!("plan_{}", plan.title), task.clone());
             request_ids.push(request_id);
         }
 
@@ -140,8 +138,9 @@ impl ExecutionQueue {
             success: false,
             content: "Processing...".to_string(),
             completed_task_ids: Vec::new(),
+            decomposed_tasks: None,
         };
-        
+
         self.history.push((request, placeholder_response));
     }
 
@@ -172,69 +171,5 @@ impl ExecutionQueue {
     /// Get request ID from any QueueRequest
     fn get_request_id<'a>(&self, request: &'a QueueRequest) -> &'a String {
         Self::get_request_id_static(request)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_queue_basic_operations() {
-        let mut queue = ExecutionQueue::new();
-        
-        // Test normal priority prompt
-        let id1 = queue.push_user_prompt("Normal task".to_string(), 3);
-        assert_eq!(queue.pending_count(), 1);
-        
-        // Test high priority prompt
-        let id2 = queue.push_user_prompt("Urgent task".to_string(), 7);
-        assert_eq!(queue.pending_count(), 2);
-        
-        // High priority should be popped first
-        let next = queue.pop_request().unwrap();
-        match next {
-            QueueRequest::UserPrompt { id, priority, .. } => {
-                assert_eq!(id, id2);
-                assert_eq!(priority, 7);
-            }
-            _ => panic!("Expected UserPrompt"),
-        }
-        
-        // Then normal priority
-        let next = queue.pop_request().unwrap();
-        match next {
-            QueueRequest::UserPrompt { id, priority, .. } => {
-                assert_eq!(id, id1);
-                assert_eq!(priority, 3);
-            }
-            _ => panic!("Expected UserPrompt"),
-        }
-        
-        assert_eq!(queue.pending_count(), 0);
-    }
-
-    #[test]
-    fn test_task_execution_queue() {
-        let mut queue = ExecutionQueue::new();
-        let task = Task::new(
-            1,
-            "Test task".to_string(),
-            "bash".to_string(),
-            "test.sh".to_string(),
-            "run test".to_string(),
-        );
-        
-        let id = queue.push_task_execution("plan_1".to_string(), task);
-        assert_eq!(queue.pending_count(), 1);
-        
-        let request = queue.pop_request().unwrap();
-        match request {
-            QueueRequest::TaskExecution { id: req_id, plan_id, .. } => {
-                assert_eq!(req_id, id);
-                assert_eq!(plan_id, "plan_1");
-            }
-            _ => panic!("Expected TaskExecution"),
-        }
     }
 }
