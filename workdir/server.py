@@ -1,7 +1,10 @@
-import argparse
+import http.server
+import socketserver
 
-parser = argparse.ArgumentParser(description='Server description')
-parser.add_argument('--port', type=int, help='Port number to run the server on')
-args = parser.parse_args()
+PORT = 8000
 
-# Use args.port in the server logic where applicable
+Handler = http.server.SimpleHTTPRequestHandler
+
+with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    print("serving at port", PORT)
+    httpd.serve_forever()
