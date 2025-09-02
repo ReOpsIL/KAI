@@ -37,7 +37,188 @@ impl Phase {
     }
 }
 
-/// Core plan structure organizing tasks into phases
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+
+/// Plan-specific temporary context that accumulates during execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanContext {
+    /// Accumulated results from executed tasks, keyed by task ID
+    pub task_results: HashMap<usize, TaskResult>,
+    /// Plan-scoped variables and state
+    pub plan_variables: HashMap<String, String>,
+    /// Parent plan context for sub-plans (allows inheritance)
+    pub parent_context: Option<Box<PlanContext>>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Plan execution metadata
+    pub execution_metadata: ExecutionMetadata,
+}
+
+/// Result of a task execution including LLM processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResult {
+    /// Task ID that generated this result
+    pub task_id: usize,
+    /// Original tool execution result
+    pub tool_result: String,
+    /// LLM-processed result with context awareness
+    pub llm_processed_result: String,
+    /// Any extracted data or variables from the result
+    pub extracted_variables: HashMap<String, String>,
+    /// Success status
+    pub success: bool,
+    /// Execution timestamp
+    pub executed_at: DateTime<Utc>,
+}
+
+/// Metadata about plan execution state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionMetadata {
+    /// Total tasks in plan
+    pub total_tasks: usize,
+    /// Completed tasks count
+    pub completed_tasks: usize,
+    /// Current phase being executed
+    pub current_phase: Option<String>,
+    /// Plan start time
+    pub started_at: DateTime<Utc>,
+    /// Last activity timestamp
+    pub last_activity: DateTime<Utc>,
+}
+
+impl PlanContext {
+    /// Create new plan context
+    pub fn new(parent: Option<PlanContext>) -> Self {
+        let now = Utc::now();
+        Self {
+            task_results: HashMap::new(),
+            plan_variables: HashMap::new(),
+            parent_context: parent.map(Box::new),
+            created_at: now,
+            execution_metadata: ExecutionMetadata {
+                total_tasks: 0,
+                completed_tasks: 0,
+                current_phase: None,
+                started_at: now,
+                last_activity: now,
+            },
+        }
+    }
+
+    /// Add task result to context
+    pub fn add_task_result(&mut self, result: TaskResult) {
+        self.task_results.insert(result.task_id, result);
+        self.execution_metadata.completed_tasks += 1;
+        self.execution_metadata.last_activity = Utc::now();
+    }
+
+    /// Get task result by ID, checking parent contexts
+    pub fn get_task_result(&self, task_id: usize) -> Option<&TaskResult> {
+        self.task_results
+            .get(&task_id)
+            .or_else(|| self.parent_context.as_ref()?.get_task_result(task_id))
+    }
+
+    /// Get all available task results including from parent contexts
+    pub fn get_all_available_results(&self) -> HashMap<usize, &TaskResult> {
+        let mut results = HashMap::new();
+
+        // Add parent results first (can be overridden by current level)
+        if let Some(parent) = &self.parent_context {
+            results.extend(parent.get_all_available_results());
+        }
+
+        // Add current level results
+        for (id, result) in &self.task_results {
+            results.insert(*id, result);
+        }
+
+        results
+    }
+
+    /// Set plan variable
+    pub fn set_variable(&mut self, key: String, value: String) {
+        self.plan_variables.insert(key, value);
+        self.execution_metadata.last_activity = Utc::now();
+    }
+
+    /// Get plan variable, checking parent contexts
+    pub fn get_variable(&self, key: &str) -> Option<&String> {
+        self.plan_variables
+            .get(key)
+            .or_else(|| self.parent_context.as_ref()?.get_variable(key))
+    }
+
+    /// Get the file content from a previous read_file task
+    pub fn get_file_content_from_task(&self, task_id: usize) -> Option<String> {
+        let task_result = self.get_task_result(task_id)?;
+        let json_result: serde_json::Value = serde_json::from_str(&task_result.tool_result).ok()?;
+        json_result["data"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+    }
+
+    /// Format context for LLM consumption
+    pub fn format_for_llm(&self, task_dependencies: &[usize]) -> String {
+        let mut context_parts = Vec::new();
+
+        // Add plan execution status
+        context_parts.push(format!(
+            "## Plan Execution Context\n- Progress: {}/{} tasks completed\n- Current Phase: {}\n- Started: {}",
+            self.execution_metadata.completed_tasks,
+            self.execution_metadata.total_tasks,
+            self.execution_metadata.current_phase.as_deref().unwrap_or("Unknown"),
+            self.execution_metadata.started_at.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+
+        // Add relevant task results based on dependencies
+        if !task_dependencies.is_empty() {
+            let mut dependency_results = Vec::new();
+            for &dep_id in task_dependencies {
+                if let Some(result) = self.get_task_result(dep_id) {
+                    dependency_results.push(format!(
+                        "### Task {} Result\n- Success: {}\n- LLM Analysis: {}\n- Variables: {:?}",
+                        dep_id,
+                        result.success,
+                        Self::truncate_text(&result.llm_processed_result, 200),
+                        result.extracted_variables
+                    ));
+                }
+            }
+
+            if !dependency_results.is_empty() {
+                context_parts.push(format!(
+                    "## Dependency Task Results\n{}",
+                    dependency_results.join("\n\n")
+                ));
+            }
+        }
+
+        // Add plan variables
+        if !self.plan_variables.is_empty() {
+            let vars: Vec<String> = self
+                .plan_variables
+                .iter()
+                .map(|(k, v)| format!("- {}: {}", k, Self::truncate_text(v, 100)))
+                .collect();
+            context_parts.push(format!("## Plan Variables\n{}", vars.join("\n")));
+        }
+
+        context_parts.join("\n\n")
+    }
+
+    /// Truncate text for context display
+    fn truncate_text(text: &str, max_len: usize) -> String {
+        if text.len() <= max_len {
+            text.to_string()
+        } else {
+            format!("{}...", &text[..max_len.saturating_sub(3)])
+        }
+    }
+}
+
+/// Core plan structure organizing tasks into phases with temporary execution context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
     pub id: String,
@@ -45,21 +226,63 @@ pub struct Plan {
     pub overview: String,
     pub phases: Vec<Phase>,
     pub next_task_id: usize,
+    /// Temporary execution context for this plan
+    pub plan_context: PlanContext,
 }
 
 impl Plan {
     pub fn new(title: String, overview: String) -> Self {
+        Self::with_parent_context(title, overview, None)
+    }
+
+    /// Create new plan with optional parent context (for sub-plans)
+    pub fn with_parent_context(
+        title: String,
+        overview: String,
+        parent_context: Option<PlanContext>,
+    ) -> Self {
+        let mut plan_context = PlanContext::new(parent_context);
+        plan_context.execution_metadata.total_tasks = 0; // Will be updated when phases are added
+
         Self {
             id: "".to_string(), // Will be set by the planner
             title,
             overview,
             phases: Vec::new(),
             next_task_id: 1,
+            plan_context,
         }
+    }
+
+    /// Add task result to plan context
+    pub fn add_task_result(&mut self, result: TaskResult) {
+        self.plan_context.add_task_result(result);
+    }
+
+    /// Get task result from plan context
+    pub fn get_task_result(&self, task_id: usize) -> Option<&TaskResult> {
+        self.plan_context.get_task_result(task_id)
+    }
+
+    /// Set plan variable
+    pub fn set_plan_variable(&mut self, key: String, value: String) {
+        self.plan_context.set_variable(key, value);
+    }
+
+    /// Get plan variable
+    pub fn get_plan_variable(&self, key: &str) -> Option<&String> {
+        self.plan_context.get_variable(key)
+    }
+
+    /// Update total task count when phases are added
+    pub fn update_task_count(&mut self) {
+        let total_tasks = self.phases.iter().map(|p| p.tasks.len()).sum();
+        self.plan_context.execution_metadata.total_tasks = total_tasks;
     }
 
     pub fn add_phase(&mut self, phase: Phase) {
         self.phases.push(phase);
+        self.update_task_count();
     }
 
     /// Adds a task to a phase, defaulting to the last phase if none is specified.

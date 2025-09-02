@@ -19,7 +19,12 @@ use super::{
 };
 use crate::context::context_data_store::ContextDataStore;
 use crate::context::Context;
-use crate::planer::{Planner, QueueRequest, TaskStatus};
+use crate::planer::{
+    plan::Plan,
+    queue::{QueueRequest, QueueResponse},
+    task::{Task, TaskExecution, TaskStatus},
+    Planner,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json;
 
@@ -550,9 +555,21 @@ impl CliPrompter {
                         if let Some(request) = planner.task_planner.execution_queue.pop_request() {
                             if let QueueRequest::TaskExecution { task, .. } = request {
                                 self.print_info(&format!("Executing task: {}...", task.title));
-                                let response = planner.task_executor.execute_task(&task).await;
+                                let current_plan = planner
+                                    .task_planner
+                                    .active_plans
+                                    .iter()
+                                    .find(|p| p.id == plan_id)
+                                    .unwrap();
+                                let response = planner
+                                    .execute_task_with_context(&task, &self.context, &current_plan)
+                                    .await
+                                    .unwrap();
 
-                                if response.content.contains("Decomposition needed") {
+                                if response
+                                    .llm_processed_result
+                                    .contains("Decomposition needed")
+                                {
                                     // Task needs to be decomposed
                                     let sub_tasks =
                                         planner.task_planner.decompose_task(&task).await.unwrap();
@@ -577,11 +594,11 @@ impl CliPrompter {
                                         "✅ Task completed: {}",
                                         task.title
                                     ));
-                                    if !response.content.trim().is_empty() {
+                                    if !response.tool_result.trim().is_empty() {
                                         self.print_system("📋 Task Result:");
                                         // Parse and format the JSON result if possible
                                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
-                                            &response.content,
+                                            &response.tool_result,
                                         ) {
                                             match &parsed {
                                                 serde_json::Value::Object(obj)
@@ -597,7 +614,7 @@ impl CliPrompter {
                                                     let formatted =
                                                         serde_json::to_string_pretty(&parsed)
                                                             .unwrap_or_else(|_| {
-                                                                response.content.clone()
+                                                                response.tool_result.clone()
                                                             });
                                                     for line in formatted.lines() {
                                                         self.print_info(&format!("  {}", line));
@@ -606,7 +623,7 @@ impl CliPrompter {
                                             }
                                         } else {
                                             // Raw content
-                                            for line in response.content.lines() {
+                                            for line in response.tool_result.lines() {
                                                 self.print_info(&format!("  {}", line));
                                             }
                                         }
@@ -625,14 +642,19 @@ impl CliPrompter {
 
                                     // Display detailed failure information
                                     self.print_error(&format!("❌ Task failed: {}", task.title));
-                                    self.print_error(&format!("🔧 Tool: {}", task.tool));
-                                    self.print_error(&format!("🎯 Target: {}", task.target));
+                                    if let TaskExecution::ToolCall(tool_call) = &task.execution {
+                                        self.print_error(&format!("🔧 Tool: {}", tool_call.tool));
+                                        self.print_error(&format!(
+                                            "🎯 Target: {}",
+                                            tool_call.target
+                                        ));
+                                    }
                                     self.print_system("📋 Error Details:");
 
                                     // Parse and format the JSON error if possible
-                                    if let Ok(parsed) =
-                                        serde_json::from_str::<serde_json::Value>(&response.content)
-                                    {
+                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                                        &response.tool_result,
+                                    ) {
                                         if let serde_json::Value::Object(obj) = &parsed {
                                             if let Some(error_msg) =
                                                 obj.get("error").and_then(|v| v.as_str())
@@ -642,7 +664,7 @@ impl CliPrompter {
                                                 let formatted =
                                                     serde_json::to_string_pretty(&parsed)
                                                         .unwrap_or_else(|_| {
-                                                            response.content.clone()
+                                                            response.tool_result.clone()
                                                         });
                                                 for line in formatted.lines() {
                                                     self.print_error(&format!("  {}", line));
@@ -651,7 +673,7 @@ impl CliPrompter {
                                         }
                                     } else {
                                         // Raw error content
-                                        for line in response.content.lines() {
+                                        for line in response.tool_result.lines() {
                                             self.print_error(&format!("  {}", line));
                                         }
                                     }

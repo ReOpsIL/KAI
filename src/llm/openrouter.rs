@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 
 /// OpenRouter API client for handling prompts
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct OpenRouterClient {
     client: Client,
     api_key: String,

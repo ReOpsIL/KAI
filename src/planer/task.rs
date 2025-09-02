@@ -1,3 +1,4 @@
+use crate::planer::plan::Plan;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -11,21 +12,34 @@ pub enum TaskStatus {
     Decomposed,
 }
 
+/// Represents a tool call with its arguments
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub tool: String,      // Name of tool to execute
+    pub target: String,    // target file or directory to write / delete / list / search / grep etc
+    pub operation: String, // Operation description
+    pub content: String,   //File content for writing / replacing
+}
+
+/// Defines what a task executes: either a direct tool call or a sub-plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TaskExecution {
+    ToolCall(ToolCall),
+    SubPlan(Plan),
+}
+
 /// Core task structure with essential attributes only
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: usize,
     pub title: String,
-    pub tool: String,      // Name of tool to execute
-    pub target: String,    // target file or directory to write / delete / list / search / grep etc
-    pub operation: String, // Operation description
-    pub content: String,   //File content for writing / replacing
+    pub execution: TaskExecution,
     pub dependencies: Vec<usize>,
     pub status: TaskStatus,
 }
 
 impl Task {
-    pub fn new(
+    pub fn new_tool_task(
         id: usize,
         title: String,
         tool: String,
@@ -36,10 +50,22 @@ impl Task {
         Self {
             id,
             title,
-            tool,
-            target,
-            operation,
-            content,
+            execution: TaskExecution::ToolCall(ToolCall {
+                tool,
+                target,
+                operation,
+                content,
+            }),
+            dependencies: Vec::new(),
+            status: TaskStatus::Pending,
+        }
+    }
+
+    pub fn new_sub_plan_task(id: usize, title: String, plan: Plan) -> Self {
+        Self {
+            id,
+            title,
+            execution: TaskExecution::SubPlan(plan),
             dependencies: Vec::new(),
             status: TaskStatus::Pending,
         }
@@ -95,18 +121,32 @@ impl fmt::Display for Task {
             "   \x1b[1m▶ Task {}: {}\x1b[0m {}",
             self.id, self.title, self.status
         )?;
-        writeln!(f, "     \x1b[36m🔧 Tool:\x1b[0m {}", self.tool)?;
-        writeln!(f, "     \x1b[35m🎯 Target:\x1b[0m {}", self.target)?;
-        writeln!(
-            f,
-            "     \x1b[33m🚜  Operation:\x1b[0m {}",
-            wrap_text(&self.operation, 60, "        ")
-        )?;
-        writeln!(
-            f,
-            "     \x1b[33m🏃  Content:\x1b[0m {}",
-            wrap_text(&self.content, 60, "        ")
-        )?;
+
+        match &self.execution {
+            TaskExecution::ToolCall(tool_call) => {
+                writeln!(f, "     \x1b[36m🔧 Tool:\x1b[0m {}", tool_call.tool)?;
+                writeln!(f, "     \x1b[35m🎯 Target:\x1b[0m {}", tool_call.target)?;
+                writeln!(
+                    f,
+                    "     \x1b[33m🚜  Operation:\x1b[0m {}",
+                    wrap_text(&tool_call.operation, 60, "        ")
+                )?;
+                writeln!(
+                    f,
+                    "     \x1b[33m🏃  Content:\x1b[0m {}",
+                    wrap_text(&tool_call.content, 60, "        ")
+                )?;
+            }
+            TaskExecution::SubPlan(plan) => {
+                writeln!(f, "     \x1b[36m📋 Sub-Plan:\x1b[0m {}", plan.title)?;
+                let (completed, total) = plan.get_progress();
+                writeln!(
+                    f,
+                    "        Progress: {}/{}\x1b[0m tasks completed",
+                    completed, total
+                )?;
+            }
+        }
 
         if !self.dependencies.is_empty() {
             let deps = self
